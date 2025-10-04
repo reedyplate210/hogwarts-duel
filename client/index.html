@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hogwarts Duel</title>
+    <link rel="stylesheet" href="style.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <div id="app">
+
+      <!-- End-of-game overlay -->
+      <div id="end-screen" class="hidden">
+        <div id="end-text"></div>
+      </div>
+
+      <!-- Arena -->
+      <div id="arena">
+        <img id="bg" src="assets/bg_hall.png" alt="Arena" />
+        <div id="left-slot" class="slot">
+          <img id="left-sprite" src="assets/wizard_left.png" alt="You" />
+        </div>
+        <div id="right-slot" class="slot">
+          <img id="right-sprite" src="assets/wizard_right.png" alt="Opponent" />
+        </div>
+
+        <!-- HP Panels -->
+        <div id="left-panel" class="panel">
+          <div class="name" id="left-name">You</div>
+          <div class="hpbar"><div class="hpfill" id="left-hpfill" style="width:100%"></div></div>
+          <div class="hptext" id="left-hptext">0/0</div>
+        </div>
+        <div id="right-panel" class="panel">
+          <div class="name" id="right-name">Opponent</div>
+          <div class="hpbar"><div class="hpfill" id="right-hpfill" style="width:100%"></div></div>
+          <div class="hptext" id="right-hptext">0/0</div>
+        </div>
+
+        <!-- FX layer -->
+        <div id="fx-layer"></div>
+      </div>
+
+      <!-- UI -->
+      <div id="ui">
+        <div id="buttons"><!-- spell buttons injected by main.js --></div>
+        <div id="status">Choose a spell…</div>
+        <div id="log" class="log"></div>
+      </div>
+    </div>
+
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
