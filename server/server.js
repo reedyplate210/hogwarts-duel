@@ -1,4 +1,3 @@
-// server.js
 const path = require('path');
 const express = require('express');
 const http = require('http');
@@ -6,12 +5,19 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server); // same-origin sockets
 
-// ✅ Serve client
+// Serve static client
 const CLIENT_DIR = path.join(__dirname, 'client');
 app.use(express.static(CLIENT_DIR));
-app.get('*', (_, res) => res.sendFile(path.join(CLIENT_DIR, 'index.html')));
+
+// ✅ Catch-all fallback for SPA, WITHOUT using '*' or '/*'
+//    and DO NOT intercept Socket.IO requests.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/socket.io/')) return next(); // let Socket.IO handle it
+  if (req.method !== 'GET') return next();
+  return res.sendFile(path.join(CLIENT_DIR, 'index.html'));
+});
 
 // ===================== GAME LOGIC =====================
 
