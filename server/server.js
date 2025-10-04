@@ -11,10 +11,9 @@ const io = new Server(server); // same-origin sockets
 const CLIENT_DIR = path.join(__dirname, 'client');
 app.use(express.static(CLIENT_DIR));
 
-// ✅ Catch-all fallback for SPA, WITHOUT using '*' or '/*'
-//    and DO NOT intercept Socket.IO requests.
+// ✅ Catch-all fallback for SPA (no '*' route). Don’t intercept Socket.IO.
 app.use((req, res, next) => {
-  if (req.path.startsWith('/socket.io/')) return next(); // let Socket.IO handle it
+  if (req.path.startsWith('/socket.io/')) return next();
   if (req.method !== 'GET') return next();
   return res.sendFile(path.join(CLIENT_DIR, 'index.html'));
 });
@@ -86,127 +85,254 @@ function applyStartOfRound(state, room){
     let total = 0;
     plr.dots.forEach(d => { total += d.amount; d.turns -= 1; });
     plr.dots = plr.dots.filter(d => d.turns > 0);
-    if (total>0){ plr.currentHP = Math.max(0,plr.currentHP-total);
-      io.to(room).emit('battleUpdate',{msg:`${plr.name} suffers ${total} damage from lingering curses!`,state});
+    if (total>0){
+      plr.currentHP = Math.max(0, plr.currentHP - total);
+      io.to(room).emit('battleUpdate', { msg: `${plr.name} suffers ${total} damage from lingering curses!`, state });
     }
   };
   applyDots(p1); applyDots(p2);
+
   let p1Dead = p1.currentHP<=0, p2Dead = p2.currentHP<=0;
-  if(p1Dead) p1Dead=!tryRevive(p1,state,room)&&p1.currentHP<=0;
-  if(p2Dead) p2Dead=!tryRevive(p2,state,room)&&p2.currentHP<=0;
-  if(p1Dead&&p2Dead){state.gameOver=true;io.to(room).emit('battleUpdate',{msg:`Both wizards fall! It's a draw!`,state});return true;}
-  if(p1Dead){state.gameOver=true;io.to(room).emit('battleUpdate',{msg:`${p2.name} wins!`,state});return true;}
-  if(p2Dead){state.gameOver=true;io.to(room).emit('battleUpdate',{msg:`${p1.name} wins!`,state});return true;}
+  if (p1Dead) p1Dead = !tryRevive(p1, state, room) && p1.currentHP<=0;
+  if (p2Dead) p2Dead = !tryRevive(p2, state, room) && p2.currentHP<=0;
+
+  if (p1Dead && p2Dead){ state.gameOver=true; io.to(room).emit('battleUpdate',{msg:`Both wizards fall! It's a draw!`,state}); return true; }
+  if (p1Dead){ state.gameOver=true; io.to(room).emit('battleUpdate',{msg:`${p2.name} wins!`,state}); return true; }
+  if (p2Dead){ state.gameOver=true; io.to(room).emit('battleUpdate',{msg:`${p1.name} wins!`,state}); return true; }
   return false;
 }
 
 io.on('connection', socket=>{
-  console.log('player connected',socket.id);
+  console.log('player connected', socket.id);
 
-  if(waitingPlayer){
-    const room=`room_${waitingPlayer}_${socket.id}`;
+  // Pair players → selection phase
+  if (waitingPlayer){
+    const room = `room_${waitingPlayer}_${socket.id}`;
     socket.join(room);
     io.sockets.sockets.get(waitingPlayer)?.join(room);
-    const state={room,selectionPhase:true,players:[
-      {id:waitingPlayer,selectedKey:null,selectedItem:null},
-      {id:socket.id,selectedKey:null,selectedItem:null}
-    ],gameOver:false};
-    battles.set(room,state);
-    const roster=Object.entries(CHARACTERS).map(([k,v])=>({key:k,...v}));
-    const items=Object.entries(ITEMS).map(([k,v])=>({key:k,...v}));
-    io.to(room).emit('selectPhase',{roster,items,state});
-    waitingPlayer=null;
-  }else waitingPlayer=socket.id;
 
-  socket.on('chooseCharacter',charKey=>{
-    const room=[...socket.rooms].find(r=>r.startsWith('room_'));if(!room)return;
-    const state=battles.get(room);if(!state||state.gameOver||!state.selectionPhase)return;
-    if(!CHARACTERS[charKey])return;
-    const idx=state.players.findIndex(p=>p.id===socket.id);if(idx===-1)return;
-    state.players[idx].selectedKey=charKey;
-    io.to(room).emit('selectionUpdate',{msg:`A player locked in ${CHARACTERS[charKey].name}.`,state});
-    maybeStart(state,room);
-  });
+    const state = {
+      room,
+      selectionPhase: true,
+      players: [
+        { id: waitingPlayer, selectedKey: null, selectedItem: null },
+        { id: socket.id,     selectedKey: null, selectedItem: null }
+      ],
+      gameOver: false
+    };
+    battles.set(room, state);
 
-  socket.on('chooseItem',itemKey=>{
-    const room=[...socket.rooms].find(r=>r.startsWith('room_'));if(!room)return;
-    const state=battles.get(room);if(!state||state.gameOver||!state.selectionPhase)return;
-    if(!ITEMS[itemKey])return;
-    const idx=state.players.findIndex(p=>p.id===socket.id);if(idx===-1)return;
-    state.players[idx].selectedItem=itemKey;
-    io.to(room).emit('selectionUpdate',{msg:`A player equipped ${itemKey}.`,state});
-    maybeStart(state,room);
-  });
-
-  function maybeStart(state,room){
-    if(!state.players.every(p=>p.selectedKey&&p.selectedItem))return;
-    state.players=state.players.map(p=>{
-      const c=CHARACTERS[p.selectedKey];return{
-        id:p.id,charKey:p.selectedKey,...c,
-        currentHP:c.maxHP,chosenSpell:null,dots:[],stun:0,
-        itemKey:p.selectedItem,item:ITEMS[p.selectedItem],_revived:false,
-        spellUses:{...USAGE_LIMITS}
-      };
-    });
-    state.selectionPhase=false;state.round=1;state.gameOver=false;
-    io.to(room).emit('start',state);
+    const roster = Object.entries(CHARACTERS).map(([k,v])=>({ key:k, ...v }));
+    const items  = Object.entries(ITEMS).map(([k,v])=>({ key:k, ...v }));
+    io.to(room).emit('selectPhase', { roster, items, state });
+    waitingPlayer = null;
+  } else {
+    waitingPlayer = socket.id;
   }
 
-  socket.on('chooseSpell',spellName=>{
-    const room=[...socket.rooms].find(r=>r.startsWith('room_'));if(!room)return;
-    const state=battles.get(room);if(!state||state.gameOver||state.selectionPhase)return;
-    const idx=state.players.findIndex(p=>p.id===socket.id);if(idx===-1)return;
-    const me=state.players[idx];
-    if(me.spellUses?.[spellName]===0){
-      io.to(socket.id).emit('battleUpdate',{msg:`❌ You can’t cast ${spellName} anymore!`,state});
+  // Character choice
+  socket.on('chooseCharacter', (charKey) => {
+    const room = [...socket.rooms].find(r=>r.startsWith('room_')); if(!room) return;
+    const state = battles.get(room); if(!state || state.gameOver || !state.selectionPhase) return;
+    if(!CHARACTERS[charKey]) return;
+
+    const idx = state.players.findIndex(p=>p.id===socket.id); if(idx===-1) return;
+    state.players[idx].selectedKey = charKey;
+    io.to(room).emit('selectionUpdate', { msg:`A player locked in ${CHARACTERS[charKey].name}.`, state });
+    maybeStart(state, room);
+  });
+
+  // Item choice
+  socket.on('chooseItem', (itemKey) => {
+    const room = [...socket.rooms].find(r=>r.startsWith('room_')); if(!room) return;
+    const state = battles.get(room); if(!state || state.gameOver || !state.selectionPhase) return;
+    if(!ITEMS[itemKey]) return;
+
+    const idx = state.players.findIndex(p=>p.id===socket.id); if(idx===-1) return;
+    state.players[idx].selectedItem = itemKey;
+    io.to(room).emit('selectionUpdate', { msg:`A player equipped ${itemKey}.`, state });
+    maybeStart(state, room);
+  });
+
+  // Start battle when both have character + item
+  function maybeStart(state, room){
+    if (!state.players.every(p => p.selectedKey && p.selectedItem)) return;
+
+    state.players = state.players.map(p => {
+      const c = CHARACTERS[p.selectedKey];
+      return {
+        id: p.id,
+        charKey: p.selectedKey,
+        name: c.name,                // ✅ ensure name is set for winner messages
+        ...c,
+        currentHP: c.maxHP,
+        chosenSpell: null,
+        dots: [],
+        stun: 0,
+        itemKey: p.selectedItem,
+        item: ITEMS[p.selectedItem],
+        _revived: false,
+        spellUses: { ...USAGE_LIMITS }
+      };
+    });
+
+    state.selectionPhase = false;
+    state.round = 1;
+    state.gameOver = false;
+    io.to(room).emit('start', state);
+  }
+
+  // Simultaneous choice battle system
+  socket.on('chooseSpell', (spellName) => {
+    const room = [...socket.rooms].find(r=>r.startsWith('room_')); if(!room) return;
+    const state = battles.get(room); if(!state || state.gameOver || state.selectionPhase) return;
+
+    const idx = state.players.findIndex(p=>p.id===socket.id); if(idx===-1) return;
+    const me = state.players[idx];
+
+    // usage limit gate
+    if (me.spellUses?.[spellName] === 0) {
+      io.to(socket.id).emit('battleUpdate', { msg:`❌ You can’t cast ${spellName} anymore!`, state });
       return;
     }
-    me.chosenSpell=spellName;
-    io.to(room).emit('battleUpdate',{msg:`${me.name||CHARACTERS[me.charKey].name} has chosen a spell!`,state});
-    if(!state.players.every(p=>p.chosenSpell))return;
-    if(applyStartOfRound(state,room))return;
-    const [p1,p2]=state.players;
-    const eff=p=>p.stun>0?{name:'(Stunned)',dmg:0,priority:0,skip:true}:{name:p.chosenSpell,...SPELLS[p.chosenSpell]};
-    const s1=eff(p1),s2=eff(p2);
-    const use=(pl,s)=>{if(!s.skip&&pl.spellUses?.[s.name]!==undefined&&pl.spellUses[s.name]>0)pl.spellUses[s.name]--;};
-    use(p1,s1);use(p2,s2);
-    const spd1=p1.speed+(p1.item?.speedBoost||0)+(s1.priority||0);
-    const spd2=p2.speed+(p2.item?.speedBoost||0)+(s2.priority||0);
-    let first=p1,fs=s1,second=p2,ss=s2;if(spd2>spd1||(spd2===spd1&&Math.random()<.5)){first=p2;fs=s2;second=p1;ss=s1;}
-    const say=m=>io.to(room).emit('battleUpdate',{msg:m,state});
-    const doSpell=(c,t,s,es)=>{
-      if(s.skip){say(`${c.name} is stunned and can't act!`);return null;}
-      if(s.shield){say(`${c.name} cast ${s.name} and is protected!`);return null;}
-      if(s.instantKO){
-        if(es?.shield){
-          c.currentHP=0;clampHP(c);
-          if(!tryRevive(c,state,room)&&c.currentHP<=0){say(`${t.name}'s Protego reflected ${s.name} back to ${c.name}!`);return{ko:true,dead:'caster'};}
-          say(`${t.name}'s Protego reflected ${s.name} back to ${c.name}, but they revived!`);return null;
-        }else{
-          t.currentHP=0;clampHP(t);
-          if(!tryRevive(t,state,room)&&t.currentHP<=0){say(`${c.name} cast ${s.name}! It's fatal!`);return{ko:true,dead:'target'};}
-          say(`${c.name} cast ${s.name} — ${t.name} revived!`);return null;
+
+    me.chosenSpell = spellName;
+    io.to(room).emit('battleUpdate', { msg:`${me.name} has chosen a spell!`, state });
+
+    // wait until both chosen
+    if (!state.players.every(p=>p.chosenSpell)) return;
+
+    // start-of-round DoTs / early KOs
+    if (applyStartOfRound(state, room)) return;
+
+    const [p1, p2] = state.players;
+
+    const eff = (p) => p.stun > 0
+      ? ({ name:'(Stunned)', dmg:0, priority:0, skip:true })
+      : ({ name:p.chosenSpell, ...SPELLS[p.chosenSpell] });
+
+    const s1 = eff(p1), s2 = eff(p2);
+
+    // consume use for non-skipped spells
+    const use = (pl, s) => {
+      if (!s.skip && pl.spellUses?.[s.name] !== undefined && pl.spellUses[s.name] > 0) {
+        pl.spellUses[s.name]--;
+      }
+    };
+    use(p1, s1); use(p2, s2);
+
+    // order by speed + priority (+ item speed)
+    const spd1 = p1.speed + (p1.item?.speedBoost||0) + (s1.priority||0);
+    const spd2 = p2.speed + (p2.item?.speedBoost||0) + (s2.priority||0);
+
+    let first=p1, fs=s1, second=p2, ss=s2;
+    if (spd2 > spd1 || (spd2===spd1 && Math.random()<0.5)) {
+      first=p2; fs=s2; second=p1; ss=s1;
+    }
+
+    const say = (m) => io.to(room).emit('battleUpdate', { msg:m, state });
+
+    const doSpell = (c, t, s, es) => {
+      if (s.skip) { say(`${c.name} is stunned and can't act!`); return null; }
+      if (s.shield) { say(`${c.name} cast ${s.name} and is protected!`); return null; }
+
+      if (s.instantKO) {
+        if (es?.shield) {
+          c.currentHP = 0; clampHP(c);
+          if (!tryRevive(c, state, room) && c.currentHP <= 0) {
+            say(`${t.name}'s Protego reflected ${s.name} back to ${c.name}!`);
+            return { ko:true, dead:'caster' };
+          }
+          say(`${t.name}'s Protego reflected ${s.name} back to ${c.name}, but they revived!`);
+          return null;
+        } else {
+          t.currentHP = 0; clampHP(t);
+          if (!tryRevive(t, state, room) && t.currentHP <= 0) {
+            say(`${c.name} cast ${s.name}! It's fatal!`);
+            return { ko:true, dead:'target' };
+          }
+          say(`${c.name} cast ${s.name} — ${t.name} revived!`);
+          return null;
         }
       }
-      if(s.dmg<0){const heal=-s.dmg;c.currentHP=Math.min(c.maxHP,c.currentHP+heal);say(`${c.name} healed ${heal} HP with ${s.name}!`);return null;}
-      if(s.dmg>0){
-        if(es?.shield){const ref=s.dmg+(c.item?.bonusDmg||0);c.currentHP=Math.max(0,c.currentHP-ref);say(`${t.name}'s Protego reflected ${ref} damage back to ${c.name}!`);if(!tryRevive(c,state,room)&&c.currentHP<=0)return{ko:true,dead:'caster'};return null;}
-        if(t.item?.dodgeChance&&Math.random()<t.item.dodgeChance){say(`${t.name} dodged the attack with the Invisibility Cloak!`);return null;}
-        let dmg=s.dmg+(c.item?.bonusDmg||0),crit=false;if(c.item?.critChance&&Math.random()<c.item.critChance){dmg=Math.floor(dmg*(c.item?.critMult||2));crit=true;}
-        t.currentHP=Math.max(0,t.currentHP-dmg);say(`${c.name} used ${s.name} for ${dmg} damage!${crit?' (CRIT!)':''}`);if(!tryRevive(t,state,room)&&t.currentHP<=0)return{ko:true,dead:'target'};
-      }else say(`${c.name} used ${s.name}!`);
-      if(s.stun&&!es?.shield){t.stun=Math.max(t.stun||0,s.stun);say(`${t.name} is stunned and will skip their next action!`);}
-      if(s.dot&&!es?.shield){t.dots=t.dots||[];t.dots.push({...s.dot});say(`${t.name} is afflicted by ${s.name}! (${s.dot.amount} dmg for ${s.dot.turns} turns)`);}
+
+      if (s.dmg < 0) {
+        const heal = -s.dmg;
+        c.currentHP = Math.min(c.maxHP, c.currentHP + heal);
+        say(`${c.name} healed ${heal} HP with ${s.name}!`);
+        return null;
+      }
+
+      if (s.dmg > 0) {
+        if (es?.shield) {
+          const reflected = s.dmg + (c.item?.bonusDmg || 0);
+          c.currentHP = Math.max(0, c.currentHP - reflected);
+          say(`${t.name}'s Protego reflected ${reflected} damage back to ${c.name}!`);
+          if (!tryRevive(c, state, room) && c.currentHP <= 0) return { ko:true, dead:'caster' };
+          return null;
+        }
+
+        if (t.item?.dodgeChance && Math.random() < t.item.dodgeChance) {
+          say(`${t.name} dodged the attack with the Invisibility Cloak!`);
+          return null;
+        }
+
+        let dmg = s.dmg + (c.item?.bonusDmg || 0);
+        let crit = false;
+        if (c.item?.critChance && Math.random() < c.item.critChance) {
+          dmg = Math.floor(dmg * (c.item?.critMult || 2));
+          crit = true;
+        }
+
+        t.currentHP = Math.max(0, t.currentHP - dmg);
+        say(`${c.name} used ${s.name} for ${dmg} damage!${crit ? ' (CRIT!)' : ''}`);
+        if (!tryRevive(t, state, room) && t.currentHP <= 0) return { ko:true, dead:'target' };
+      } else {
+        say(`${c.name} used ${s.name}!`);
+      }
+
+      if (s.stun && !es?.shield) {
+        t.stun = Math.max(t.stun || 0, s.stun);
+        say(`${t.name} is stunned and will skip their next action!`);
+      }
+      if (s.dot && !es?.shield) {
+        t.dots = t.dots || [];
+        t.dots.push({ ...s.dot });
+        say(`${t.name} is afflicted by ${s.name}! (${s.dot.amount} dmg for ${s.dot.turns} turns)`);
+      }
       return null;
     };
-    if(!state.gameOver){const r=doSpell(first,second,fs,ss);if(r?.ko){state.gameOver=true;say(`${r.dead==='target'?first:second}.name wins!`);return;}}
-    if(!state.gameOver){const r=doSpell(second,first,ss,fs);if(r?.ko){state.gameOver=true;say(`${r.dead==='target'?second:first}.name wins!`);return;}}
-    if(p1.stun>0)p1.stun--;if(p2.stun>0)p2.stun--;
-    state.players.forEach(p=>{p.chosenSpell=null;clampHP(p);});
-    state.round=(state.round||1)+1;
-    if(!state.gameOver)io.to(room).emit('battleUpdate',{msg:`New turn! Both players choose a spell.`,state});
+
+    // First action
+    if (!state.gameOver) {
+      const r = doSpell(first, second, fs, ss);
+      if (r?.ko) {
+        state.gameOver = true;
+        const winner = (r.dead === 'target') ? first : second; // ✅ pick the actual winner object
+        say(`${winner.name} wins!`);                           // ✅ announce winner's name
+        return;
+      }
+    }
+    // Second action
+    if (!state.gameOver) {
+      const r = doSpell(second, first, ss, fs);
+      if (r?.ko) {
+        state.gameOver = true;
+        const winner = (r.dead === 'target') ? second : first; // ✅ correct winner here too
+        say(`${winner.name} wins!`);
+        return;
+      }
+    }
+
+    if (p1.stun > 0) p1.stun--;
+    if (p2.stun > 0) p2.stun--;
+
+    state.players.forEach(p => { p.chosenSpell = null; clampHP(p); });
+    state.round = (state.round || 1) + 1;
+
+    if (!state.gameOver) io.to(room).emit('battleUpdate', { msg:`New turn! Both players choose a spell.`, state });
   });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT,()=>console.log('Server running on',PORT));
+server.listen(PORT, () => console.log('Server running on', PORT));
