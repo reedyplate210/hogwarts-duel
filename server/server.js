@@ -13,7 +13,8 @@ const battles = new Map(); // roomId -> state
 // ✅ serve the client as a website (single deploy)
 const CLIENT_DIR = path.join(__dirname, 'client');
 app.use(express.static(CLIENT_DIR));
-app.get('*', (_, res) => res.sendFile(path.join(CLIENT_DIR, 'index.html')));
+// 🔧 FIX: use '/*' instead of '*'
+app.get('/*', (_, res) => res.sendFile(path.join(CLIENT_DIR, 'index.html')));
 
 // --- Characters ---
 const CHARACTERS = {
@@ -53,7 +54,6 @@ const SPELLS = {
 };
 
 // --- Spell usage limits ---
-// (undefined means unlimited)
 const USAGE_LIMITS = {
   "Sectumsempra": 4,
   "Protego": 4,
