@@ -1,5 +1,4 @@
-import { io } from "socket.io-client";
-
+// Socket.IO client is loaded globally via <script src="/socket.io/socket.io.js"></script>
 // ✅ Auto-connect to the same origin (works locally & when deployed)
 const socket = io(window.location.origin);
 
