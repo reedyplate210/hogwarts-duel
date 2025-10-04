@@ -1,7 +1,7 @@
 import { io } from "socket.io-client";
 
 // ✅ Auto-connect to the same origin (works locally & when deployed)
-const socket = io();
+const socket = io(window.location.origin);
 
 const logEl = document.getElementById('log');
 const statusEl = document.getElementById('status');
